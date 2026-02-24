@@ -1,33 +1,50 @@
 import SwiftUI
 import SwiftData
 
-// Lists registered drivers. Full implementation in Week 3.
+// Shows this device's driver profile and registered vehicles.
+// Full implementation in Week 3.
 struct DriversView: View {
-    @Query var drivers: [Driver]
+    @Query var profiles: [DriverProfile]
+    @Query var vehicles: [Vehicle]
 
     var body: some View {
         NavigationStack {
-            Group {
-                if drivers.isEmpty {
-                    ContentUnavailableView("No Drivers",
-                                          systemImage: "person.badge.plus",
-                                          description: Text("Add a driver to get started."))
-                } else {
-                    List(drivers) { driver in
+            List {
+                Section("My Profile") {
+                    if let profile = profiles.first {
                         VStack(alignment: .leading) {
-                            Text(driver.name).font(.headline)
-                            Text("\(driver.sessions.count) sessions")
+                            Text(profile.name).font(.headline)
+                            Text("\(profile.sessions.count) sessions")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("No profile set up yet.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Vehicles") {
+                    if vehicles.isEmpty {
+                        Text("No vehicles registered.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(vehicles) { vehicle in
+                            VStack(alignment: .leading) {
+                                Text(vehicle.name).font(.headline)
+                                Text(String(format: "%.1f L/100km", vehicle.fuelEfficiencyLitersPer100Km))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Drivers")
+            .navigationTitle("Profile & Vehicles")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        // Week 3: add driver flow
+                        // Week 3: add vehicle / edit profile flow
                     } label: {
                         Image(systemName: "plus")
                     }

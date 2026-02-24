@@ -7,6 +7,6 @@ struct FairFuelApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [Driver.self, DrivingSession.self, TripPoint.self, FuelEntry.self])
+        .modelContainer(for: [DriverProfile.self, Vehicle.self, DrivingSession.self, TripPoint.self, FuelEntry.self])
     }
 }

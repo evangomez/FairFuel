@@ -12,7 +12,8 @@ final class DrivingSession {
     var hardBrakeEvents: Int
     var estimatedFuelLiters: Double
 
-    var driver: Driver?
+    var driver: DriverProfile?
+    var vehicle: Vehicle?
 
     @Relationship(deleteRule: .cascade)
     var points: [TripPoint]
@@ -24,7 +25,7 @@ final class DrivingSession {
         return end.timeIntervalSince(startTime)
     }
 
-    init(driver: Driver) {
+    init(driver: DriverProfile, vehicle: Vehicle) {
         self.id = UUID()
         self.startTime = Date()
         self.endTime = nil
@@ -34,6 +35,7 @@ final class DrivingSession {
         self.hardBrakeEvents = 0
         self.estimatedFuelLiters = 0
         self.driver = driver
+        self.vehicle = vehicle
         self.points = []
     }
 }

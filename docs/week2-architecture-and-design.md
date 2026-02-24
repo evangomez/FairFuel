@@ -47,9 +47,9 @@ External Hardware:
 ## 2. Component Descriptions
 
 ### 2.1 NFCService
-- **Responsibility:** Initiate an NFC reader session, parse the NDEF payload, and extract the driver UUID.
-- **Trigger:** Called by the user pressing "Start Session" or by a background NFC wakeup from the OS.
-- **Output:** `driverID: UUID` passed to `SessionManager`.
+- **Responsibility:** Initiate an NFC reader session, parse the NDEF payload, and extract the vehicle UUID.
+- **Trigger:** Called by the user tapping their phone to the vehicle's NFC tag, or by a background NFC wakeup from the OS.
+- **Output:** `vehicleID: UUID` passed to `SessionManager`. Driver identity is not in the tag — it comes from the local profile on the scanning device.
 - **Key API:** `NFCNDEFReaderSession`, `NFCNDEFMessage`, background NFC via URL scheme.
 
 ### 2.2 BLEService
@@ -74,7 +74,7 @@ External Hardware:
 - **Output:** `estimatedFuelLiters: Double`
 
 ### 2.6 SwiftData Store
-- **Responsibility:** Persist `Driver`, `DrivingSession`, `TripPoint`, and `FuelEntry` models using SwiftData (iOS 17+) or Core Data (iOS 16 fallback).
+- **Responsibility:** Persist `DriverProfile`, `Vehicle`, `DrivingSession`, `TripPoint`, and `FuelEntry` models using SwiftData (iOS 17+) or Core Data (iOS 16 fallback).
 - All queries are performed on the main actor via `@Query` in SwiftUI views or through an async fetch method.
 
 ---
@@ -82,19 +82,29 @@ External Hardware:
 ## 3. Data Models
 
 ```swift
-// A registered driver in the system
-@Model class Driver {
+// The local driver profile stored on this phone (one per device)
+@Model class DriverProfile {
     var id: UUID
     var name: String
-    var nfcTagID: String       // URI string from NFC tag (e.g. "fairfuel://driver/<UUID>")
     var createdAt: Date
+    var sessions: [DrivingSession]
+    // No nfcTagID — the phone IS the identity. Tags encode vehicles, not drivers.
+}
+
+// A vehicle registered in the app, identified by its NFC tag
+@Model class Vehicle {
+    var id: UUID
+    var name: String                         // e.g. "Honda Civic"
+    var nfcTagID: String                     // URI from tag: "fairfuel://vehicle/<UUID>"
+    var fuelEfficiencyLitersPer100Km: Double // used by FuelEstimator
     var sessions: [DrivingSession]
 }
 
 // One driving trip from session-start to session-end
 @Model class DrivingSession {
     var id: UUID
-    var driver: Driver
+    var driver: DriverProfile
+    var vehicle: Vehicle
     var startTime: Date
     var endTime: Date?          // nil while session is active
     var distanceKm: Double
@@ -131,16 +141,17 @@ External Hardware:
 
 ### Session Start Flow
 ```
-User scans NFC tag
+Driver taps phone to vehicle NFC tag
         │
         ▼
 NFCService parses NDEF payload
-        │  driverID: UUID
+        │  vehicleID: UUID
         ▼
-SessionManager.startSession(driverID:)
-        │  looks up Driver in SwiftData
-        │  creates DrivingSession (endTime = nil)
-        │  starts BLEService.startScanning()
+SessionManager.startSession(vehicleID:)
+        │  looks up Vehicle by nfcTagID in SwiftData
+        │  looks up local DriverProfile (only one exists per phone)
+        │  creates DrivingSession (driver: localProfile, vehicle: vehicle, endTime: nil)
+        │  starts BLEService.startMonitoring()
         │  starts LocationService.startTracking()
         ▼
 Session state → .active
@@ -188,10 +199,10 @@ UI shows session summary
                      ┌──────────────┐
                      │    IDLE      │  (no active session)
                      └──────┬───────┘
-                            │  NFC scan → valid driverID
+                            │  NFC scan → valid vehicleID
                             ▼
                      ┌──────────────┐
-                     │   STARTING   │  (verifying driver, spinning up services)
+                     │   STARTING   │  (resolving vehicle + local profile, spinning up services)
                      └──────┬───────┘
                             │  services ready (< 3s)
                             ▼
@@ -203,7 +214,7 @@ UI shows session summary
                │            │                 │
     beacon lost             │          user force-ends
     ≥ 90s AND         NFC scan with          (manual override)
-    stopped ≥ 3min    different driverID          │
+    stopped ≥ 3min    same tag, different phone       │
                │            │                 │
                ▼            ▼                 │
         ┌────────────┐  ┌──────────────┐      │
@@ -229,10 +240,10 @@ UI shows session summary
 | State | Description |
 |---|---|
 | IDLE | No session in progress. App is passive. Location and BLE off. |
-| STARTING | NFC scan received. Driver lookup in progress. Services initializing. |
+| STARTING | NFC scan received. Vehicle resolved from tag ID. Local driver profile loaded. Services initializing. |
 | ACTIVE | Session in progress. GPS collecting TripPoints. BLE monitoring beacon. |
 | STOPPING | Both termination conditions met. 10-second countdown before finalizing (allows re-entry). |
-| SWITCHING | A different driver scanned their NFC tag. Current session is ended first, then a new one begins. |
+| SWITCHING | Not applicable in single-phone model. Each phone manages its own session independently. |
 | ENDED | Session record finalized. Fuel estimated. UI notification sent. Returns to IDLE. |
 
 **STOPPING Cooldown Rationale:** A 10-second delay before finalizing a session prevents accidental termination (e.g., driver briefly steps out at a gas station while still fueling). If the BLE beacon reappears within the cooldown, the state returns to ACTIVE.
@@ -267,7 +278,8 @@ UI shows session summary
 
 ## 8. Next Steps (Week 3)
 
-- Implement `NFCService` with `NFCNDEFReaderSession` and URI scheme parsing.
-- Implement driver profile creation UI with NFC tag writing.
-- Wire NFC scan output into `SessionManager.startSession()`.
+- Implement `NFCService` with `NFCNDEFReaderSession` and vehicle URI scheme parsing.
+- Implement first-launch driver profile creation UI (name entry, stored locally).
+- Implement vehicle setup UI with NFC tag writing (`fairfuel://vehicle/<UUID>`).
+- Wire NFC scan output into `SessionManager.startSession(vehicleID:)`.
 - Write unit tests for NFC payload parsing.

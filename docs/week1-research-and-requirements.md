@@ -8,7 +8,7 @@
 - iOS 13+ supports both tag reading and background tag reading via Core NFC.
 - `NFCNDEFReaderSession` is the primary API for reading NDEF-formatted tags (the standard for NFC business cards, stickers, etc.).
 - `NFCTagReaderSession` provides lower-level access to ISO 7816, ISO 15693, FeliCa, and MiFare tags.
-- Background tag reading (iOS 13+): The OS can wake the app when an NDEF tag is scanned without the app being open, but only for specific NDEF record types. This is useful for driver identification.
+- Background tag reading (iOS 13+): The OS can wake the app when an NDEF tag is scanned without the app being open, but only for specific NDEF record types. This is useful for session triggering.
 
 **Constraints:**
 - NFC scanning requires explicit user action (bring phone within ~4cm of tag) — no passive background polling.
@@ -16,9 +16,9 @@
 - A reader session times out after 60 seconds of inactivity.
 - NFC writing to tags requires `NFCNDEFReaderSession` in read-write mode (iOS 13+).
 - Background NFC wakeup only works for Universal Links (`https://`) or custom URL schemes embedded in the NDEF payload.
-- Physical NFC tag cost: NTAG213/215 stickers cost < $1 each and hold 144–504 bytes, sufficient to store a unique driver ID URI.
+- Physical NFC tag cost: NTAG213/215 stickers cost < $1 each and hold 144–504 bytes, sufficient to store a unique vehicle ID URI.
 
-**Design Decision:** Each driver will be assigned a unique UUID written to their NFC tag. The tag payload will use a custom URI scheme (`fairfuel://driver/<UUID>`) to trigger app launch via background tag reading.
+**Design Decision:** One NFC tag is placed inside the vehicle. The tag encodes a **vehicle ID**, not a driver ID. Driver identity is determined by the phone scanning the tag — each driver uses their own phone with a locally stored profile. When any driver taps their phone to the tag, the app starts a session attributed to that phone's owner. The tag payload uses a custom URI scheme (`fairfuel://vehicle/<UUID>`) to trigger app launch via background tag reading. This means only **one tag per vehicle** is needed, regardless of how many drivers share it.
 
 ---
 
@@ -74,13 +74,13 @@
 
 | ID | Requirement |
 |----|-------------|
-| FR-01 | The system shall allow a driver to start a session by scanning their unique NFC tag inside the vehicle. |
+| FR-01 | The system shall allow a driver to start a session by scanning the vehicle's NFC tag with their own phone. Driver identity is determined by the local profile stored on the scanning device. |
 | FR-02 | The system shall automatically end a session when the vehicle has been stationary for at least 3 minutes AND the BLE beacon signal is lost for at least 90 seconds. |
 | FR-03 | The system shall record GPS distance, average speed, idle time, and aggressive driving events for each session. |
 | FR-04 | The system shall associate all session data with the driver who initiated it. |
 | FR-05 | The system shall allow entry of a fuel refill event (gallons/liters purchased, cost). |
 | FR-06 | The system shall calculate each driver's share of a fuel cost based on estimated fuel consumption since the last refill. |
-| FR-07 | The system shall support at least 4 simultaneous driver profiles per vehicle. |
+| FR-07 | Each phone shall store one local driver profile. Multiple drivers can share a vehicle — each uses their own phone. |
 | FR-08 | The system shall display a summary of trips and fuel usage per driver. |
 
 ### 2.2 Non-Functional Requirements
@@ -101,7 +101,7 @@
 | Constraint | Detail |
 |---|---|
 | iOS background execution | Background location requires "Always" permission; BLE scanning is duty-cycled. Session termination logic must account for delayed BLE events. |
-| NFC tag writing | Driver tags must be pre-written with the correct NDEF payload (app can do this, or tags can be pre-provisioned). |
+| NFC tag writing | One tag per vehicle must be written with a vehicle ID payload (`fairfuel://vehicle/<UUID>`). The app can write this tag during vehicle setup, or it can be pre-provisioned. Only one tag is needed per vehicle regardless of the number of drivers. |
 | Fuel estimation accuracy | Without OBD-II, fuel usage is estimated from driving behavior. Results are consistent and fair, not necessarily exact. |
 | Single driver per session | The system assumes one driver per session; passengers do not affect attribution. |
 | BLE beacon hardware | A BLE beacon must be physically placed in the vehicle. The system supports iBeacon-compatible or custom BLE peripherals. |
@@ -118,7 +118,7 @@
 | Fuel estimate consistency | Per-mile fuel consumption estimates vary < 15% for the same driver across similar trips. |
 | Cost split fairness | Allocation error compared to actual odometer/fuel usage is < 10% over a month of multi-driver use. |
 | Battery usage | < 5% battery drain per hour of active session on a modern iPhone. |
-| Usability | A new driver can complete setup (NFC tag pairing, first session) in under 3 minutes. |
+| Usability | A new driver can complete setup (create local profile, first session scan) in under 2 minutes. Vehicle NFC tag setup is a one-time operation under 1 minute. |
 
 ---
 

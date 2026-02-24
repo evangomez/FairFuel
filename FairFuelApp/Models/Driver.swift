@@ -1,20 +1,21 @@
 import Foundation
 import SwiftData
 
+// The local driver profile stored on this device.
+// There is exactly one DriverProfile per phone — the phone's owner.
+// Driver identity comes from the device, not from the NFC tag.
 @Model
-final class Driver {
+final class DriverProfile {
     var id: UUID
     var name: String
-    var nfcTagID: String
     var createdAt: Date
 
     @Relationship(deleteRule: .cascade)
     var sessions: [DrivingSession]
 
-    init(name: String, nfcTagID: String) {
+    init(name: String) {
         self.id = UUID()
         self.name = name
-        self.nfcTagID = nfcTagID
         self.createdAt = Date()
         self.sessions = []
     }

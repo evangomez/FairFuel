@@ -1,13 +1,13 @@
 import Foundation
 import CoreNFC
 
-// Callback-based wrapper around NFCNDEFReaderSession.
-// Week 3 will fill in the full implementation.
 protocol NFCServiceDelegate: AnyObject {
-    func nfcService(_ service: NFCService, didReadDriverID driverID: String)
+    func nfcService(_ service: NFCService, didReadVehicleID vehicleID: String)
     func nfcService(_ service: NFCService, didFailWithError error: Error)
 }
 
+// Reads the vehicle's NFC tag and extracts the vehicle ID.
+// Driver identity is NOT in the tag — it comes from the local DriverProfile on this device.
 final class NFCService: NSObject {
     weak var delegate: NFCServiceDelegate?
 
@@ -30,22 +30,39 @@ final class NFCService: NSObject {
         readerSession = nil
     }
 
+    // MARK: - Tag Writing (Vehicle Setup)
+
+    // Writes a vehicle ID URI to an NFC tag.
+    // Called once during vehicle setup — any driver can then scan that tag to start a session.
+    func writeVehicleTag(vehicleID: String, to session: NFCNDEFReaderSession) throws {
+        let uri = "fairfuel://vehicle/\(vehicleID)"
+        guard let uriData = uri.data(using: .utf8) else { throw NFCError.invalidPayload }
+        let payload = NFCNDEFPayload(
+            format: .nfcWellKnown,
+            type: "U".data(using: .utf8)!,
+            identifier: Data(),
+            payload: uriData
+        )
+        let message = NFCNDEFMessage(records: [payload])
+        session.connect(to: session.connectedTag!) { _ in
+            (session.connectedTag as? NFCNDEFTag)?.writeNDEF(message) { error in
+                if let error { session.invalidate(errorMessage: error.localizedDescription) }
+                else { session.invalidate() }
+            }
+        }
+    }
+
     // MARK: - Payload Parsing
 
-    // Expected NDEF payload: a URI record with scheme "fairfuel://driver/<UUID>"
-    static func extractDriverID(from message: NFCNDEFMessage) -> String? {
+    // Expected payload: URI record with scheme "fairfuel://vehicle/<ID>"
+    static func extractVehicleID(from message: NFCNDEFMessage) -> String? {
         for record in message.records {
-            guard record.typeNameFormat == .nfcWellKnown,
-                  let type = String(data: record.type, encoding: .utf8),
-                  type == "U",
-                  let payload = String(data: record.payload, encoding: .utf8) else { continue }
-
-            // Payload for URI records: first byte is URI identifier code, rest is the URI
-            let uriPrefix = "fairfuel://driver/"
-            if payload.contains(uriPrefix),
-               let range = payload.range(of: uriPrefix) {
-                let driverID = String(payload[range.upperBound...])
-                return driverID.isEmpty ? nil : driverID
+            guard let uri = record.wellKnownTypeURIPayload() else { continue }
+            let uriString = uri.absoluteString
+            let prefix = "fairfuel://vehicle/"
+            if uriString.hasPrefix(prefix) {
+                let vehicleID = String(uriString.dropFirst(prefix.count))
+                return vehicleID.isEmpty ? nil : vehicleID
             }
         }
         return nil
@@ -57,7 +74,6 @@ final class NFCService: NSObject {
 extension NFCService: NFCNDEFReaderSessionDelegate {
     func readerSession(_ session: NFCNDEFReaderSession, didInvalidateWithError error: Error) {
         let nfcError = error as? NFCReaderError
-        // Code 200 = user cancelled — not a real error
         if nfcError?.code != .readerSessionInvalidationErrorUserCanceled {
             delegate?.nfcService(self, didFailWithError: error)
         }
@@ -65,11 +81,11 @@ extension NFCService: NFCNDEFReaderSessionDelegate {
 
     func readerSession(_ session: NFCNDEFReaderSession, didDetectNDEFs messages: [NFCNDEFMessage]) {
         guard let message = messages.first,
-              let driverID = NFCService.extractDriverID(from: message) else {
+              let vehicleID = NFCService.extractVehicleID(from: message) else {
             delegate?.nfcService(self, didFailWithError: NFCError.invalidPayload)
             return
         }
-        delegate?.nfcService(self, didReadDriverID: driverID)
+        delegate?.nfcService(self, didReadVehicleID: vehicleID)
     }
 }
 
@@ -82,7 +98,7 @@ enum NFCError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notAvailable: return "NFC is not available on this device."
-        case .invalidPayload: return "The NFC tag does not contain a valid FairFuel driver ID."
+        case .invalidPayload: return "The NFC tag does not contain a valid FairFuel vehicle ID."
         }
     }
 }

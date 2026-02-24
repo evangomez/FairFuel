@@ -3,7 +3,8 @@ import CoreLocation
 import SwiftData
 
 // Central orchestrator. Owns the session state machine.
-// Coordinates NFCService, BLEService, and LocationService outputs.
+// Driver identity comes from the local DriverProfile on this device.
+// The NFC tag identifies the vehicle, not the driver.
 @MainActor
 final class SessionManager: ObservableObject {
 
@@ -31,24 +32,30 @@ final class SessionManager: ObservableObject {
 
     // MARK: - Public API
 
-    func startSession(driverTagID: String) {
-        guard case .idle = state else {
-            handleDriverSwitch(newTagID: driverTagID)
-            return
-        }
-
+    // Called when the driver taps the vehicle's NFC tag.
+    // vehicleTagURI: the full URI from the tag e.g. "fairfuel://vehicle/<UUID>"
+    func startSession(vehicleTagURI: String) {
+        guard case .idle = state else { return }
         state = .starting
 
-        let fetchDescriptor = FetchDescriptor<Driver>(
-            predicate: #Predicate { $0.nfcTagID == driverTagID }
+        // Look up the vehicle by its tag URI
+        let vehicleFetch = FetchDescriptor<Vehicle>(
+            predicate: #Predicate { $0.nfcTagID == vehicleTagURI }
         )
-
-        guard let driver = try? modelContext.fetch(fetchDescriptor).first else {
+        guard let vehicle = try? modelContext.fetch(vehicleFetch).first else {
             state = .idle
             return
         }
 
-        let session = DrivingSession(driver: driver)
+        // The driver is whoever owns this phone — fetch the single local profile
+        let driverFetch = FetchDescriptor<DriverProfile>()
+        guard let driver = try? modelContext.fetch(driverFetch).first else {
+            // No profile set up yet — UI should have caught this before allowing a scan
+            state = .idle
+            return
+        }
+
+        let session = DrivingSession(driver: driver, vehicle: vehicle)
         modelContext.insert(session)
 
         bleService.startMonitoring()
@@ -63,12 +70,6 @@ final class SessionManager: ObservableObject {
     }
 
     // MARK: - Private
-
-    private func handleDriverSwitch(newTagID: String) {
-        guard case .active(let current) = state else { return }
-        finalizeSession(current)
-        startSession(driverTagID: newTagID)
-    }
 
     private func beginStoppingCountdown(for session: DrivingSession) {
         guard case .active = state else { return }
@@ -92,7 +93,8 @@ final class SessionManager: ObservableObject {
         stoppingTask = nil
 
         session.endTime = Date()
-        session.estimatedFuelLiters = FuelEstimator.estimate(session: session)
+        let efficiency = session.vehicle?.fuelEfficiencyLitersPer100Km ?? FuelEstimator.defaultLitersPer100Km
+        session.estimatedFuelLiters = FuelEstimator.estimate(session: session, litersPer100Km: efficiency)
 
         bleService.stopMonitoring()
         locationService.stopTracking()
@@ -105,11 +107,6 @@ final class SessionManager: ObservableObject {
             state = .idle
         }
     }
-
-    private var isStopped: Bool {
-        if case .stopping = state { return true }
-        return false
-    }
 }
 
 // MARK: - BLEServiceDelegate
@@ -117,30 +114,14 @@ final class SessionManager: ObservableObject {
 extension SessionManager: BLEServiceDelegate {
     nonisolated func bleService(_ service: BLEService, beaconPresenceChanged isPresent: Bool) {
         Task { @MainActor in
-            guard case .active(let session) = self.state else {
-                if !isPresent, case .stopping(let session) = self.state { return }
-                return
-            }
-            if !isPresent {
-                // BLE lost — check paired with immobility in LocationService
-                // Stopping is triggered only when BOTH conditions are met.
-                // Here we mark a flag; SessionManager checks both.
-                self.checkTerminationConditions(session: session, blePresent: false)
-            } else {
+            if isPresent {
                 if case .stopping(let session) = self.state {
                     self.cancelStoppingCountdown(for: session)
                 }
             }
+            // Absence alone is not enough to end the session; we also need immobility.
+            // The combined check happens in the LocationService immobility callback.
         }
-    }
-
-    private func checkTerminationConditions(session: DrivingSession, blePresent: Bool) {
-        // Both beacon absence AND immobility required to enter STOPPING state
-        if !blePresent && !locationService.isTracking == false {
-            // Immobility is tracked inside LocationService via its delegate callback
-            // This will be wired up in Week 5 with a combined condition flag
-        }
-        _ = session
     }
 }
 
@@ -159,6 +140,7 @@ extension SessionManager: LocationServiceDelegate {
     nonisolated func locationService(_ service: LocationService, didDetectImmobility seconds: TimeInterval) {
         Task { @MainActor in
             guard case .active(let session) = self.state else { return }
+            // Both conditions required: vehicle stopped AND beacon gone
             if !self.bleService.isBeaconPresent {
                 self.beginStoppingCountdown(for: session)
             }
@@ -169,8 +151,7 @@ extension SessionManager: LocationServiceDelegate {
         guard let prevPoint = session.points.dropLast().last else { return }
         let prev = CLLocation(latitude: prevPoint.latitude, longitude: prevPoint.longitude)
         let curr = CLLocation(latitude: newPoint.latitude, longitude: newPoint.longitude)
-        let deltaKm = prev.distance(from: curr) / 1000.0
-        session.distanceKm += deltaKm
+        session.distanceKm += prev.distance(from: curr) / 1000.0
 
         let deltaSpeed = newPoint.speedMps - prevPoint.speedMps
         if deltaSpeed > 2.2 { session.aggressiveAccelEvents += 1 }
