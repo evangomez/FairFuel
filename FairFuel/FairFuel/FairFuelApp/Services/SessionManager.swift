@@ -7,70 +7,96 @@ final class SessionManager: NSObject, ObservableObject {
 
     enum SessionState {
         case idle
-        case starting
+        case pending(Vehicle)       // beacon detected, confirming we're actually driving
         case active(DrivingSession)
         case stopping(DrivingSession)
         case ended
     }
 
     @Published private(set) var state: SessionState = .idle
-    @Published var nfcError: String?
 
-    private let nfcService = NFCService()
     private let bleService = BLEService()
     private let locationService = LocationService()
     private var stoppingTask: Task<Void, Never>?
+
+    // I require 3 consecutive GPS readings above the speed threshold before
+    // committing to a session — avoids false starts when loading groceries near the car
+    private var drivingConfirmationCount = 0
+    private let confirmationsRequired = 3
+    private let drivingSpeedThresholdMps: Double = 2.0  // ~7 km/h
+
     private let modelContext: ModelContext
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         super.init()
-        nfcService.delegate = self
         bleService.delegate = self
         locationService.delegate = self
+        loadAndMonitorVehicles()
     }
 
-    // MARK: - Public API
-
-    /// Called by UI scan button — triggers NFC read, then auto-starts session on success.
-    func scanToStartSession() {
-        guard case .idle = state else { return }
-        nfcService.startReading()
-    }
+    // MARK: - Public
 
     func endSessionManually() {
-        guard case .active(let session) = state else { return }
-        finalizeSession(session)
+        switch state {
+        case .active(let session): finalizeSession(session)
+        case .pending(let vehicle): cancelPending(vehicle: vehicle)
+        default: break
+        }
     }
 
-    /// Programs a blank NFC sticker with a vehicle's ID. Called during vehicle setup.
-    func writeVehicleTag(vehicleID: String, completion: @escaping (Result<Void, Error>) -> Void) {
-        nfcService.writeVehicleTag(vehicleID: vehicleID, completion: completion)
+    // Call this after adding a new vehicle so monitoring starts right away
+    func beginMonitoring(vehicle: Vehicle) {
+        bleService.startMonitoringRegion(beaconUUID: vehicle.beaconUUID)
+    }
+
+    // Call this after deleting a vehicle
+    func stopMonitoring(vehicle: Vehicle) {
+        bleService.stopMonitoringRegion(beaconUUID: vehicle.beaconUUID)
     }
 
     // MARK: - Private
 
-    private func startSession(vehicleTagURI: String) {
-        state = .starting
+    private func loadAndMonitorVehicles() {
+        let vehicles = (try? modelContext.fetch(FetchDescriptor<Vehicle>())) ?? []
+        for vehicle in vehicles {
+            bleService.startMonitoringRegion(beaconUUID: vehicle.beaconUUID)
+        }
+    }
 
-        let vehicleFetch = FetchDescriptor<Vehicle>(
-            predicate: #Predicate { $0.nfcTagID == vehicleTagURI }
+    private func vehicle(forBeaconUUID uuid: String) -> Vehicle? {
+        let fetch = FetchDescriptor<Vehicle>(
+            predicate: #Predicate { $0.beaconUUID == uuid }
         )
-        let driverFetch = FetchDescriptor<DriverProfile>()
+        return try? modelContext.fetch(fetch).first
+    }
 
-        guard let vehicle = try? modelContext.fetch(vehicleFetch).first,
-              let driver = try? modelContext.fetch(driverFetch).first else {
-            state = .idle
-            nfcError = vehicle == nil
-                ? "No vehicle found for this tag. Add it in the Vehicles tab first."
-                : "No driver profile found. Please set up your profile first."
+    private func localDriver() -> DriverProfile? {
+        try? modelContext.fetch(FetchDescriptor<DriverProfile>()).first
+    }
+
+    private func enterPending(vehicle: Vehicle) {
+        guard case .idle = state else { return }
+        drivingConfirmationCount = 0
+        state = .pending(vehicle)
+        locationService.startTracking()
+        bleService.startRanging(beaconUUID: vehicle.beaconUUID)
+    }
+
+    private func cancelPending(vehicle: Vehicle) {
+        bleService.stopRanging(beaconUUID: vehicle.beaconUUID)
+        locationService.stopTracking()
+        drivingConfirmationCount = 0
+        state = .idle
+    }
+
+    private func confirmAndStartSession(vehicle: Vehicle) {
+        guard let driver = localDriver() else {
+            cancelPending(vehicle: vehicle)
             return
         }
-
         let session = DrivingSession(driver: driver, vehicle: vehicle)
         modelContext.insert(session)
-        bleService.startMonitoring()
-        locationService.startTracking()
         state = .active(session)
     }
 
@@ -96,7 +122,9 @@ final class SessionManager: NSObject, ObservableObject {
         session.endTime = Date()
         let efficiency = session.vehicle?.fuelEfficiencyLitersPer100Km ?? FuelEstimator.defaultLitersPer100Km
         session.estimatedFuelLiters = FuelEstimator.estimate(session: session, litersPer100Km: efficiency)
-        bleService.stopMonitoring()
+        if let beaconUUID = session.vehicle?.beaconUUID {
+            bleService.stopRanging(beaconUUID: beaconUUID)
+        }
         locationService.stopTracking()
         try? modelContext.save()
         state = .ended
@@ -107,26 +135,34 @@ final class SessionManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - NFCServiceDelegate
-
-extension SessionManager: NFCServiceDelegate {
-    nonisolated func nfcService(_ service: NFCService, didReadVehicleTagURI uri: String) {
-        Task { @MainActor in self.startSession(vehicleTagURI: uri) }
-    }
-
-    nonisolated func nfcService(_ service: NFCService, didFailWithError error: Error) {
-        Task { @MainActor in self.nfcError = error.localizedDescription }
-    }
-}
-
 // MARK: - BLEServiceDelegate
 
 extension SessionManager: BLEServiceDelegate {
+
+    nonisolated func bleService(_ service: BLEService, didEnterRegionForVehicle beaconUUID: String) {
+        Task { @MainActor in
+            guard let vehicle = self.vehicle(forBeaconUUID: beaconUUID) else { return }
+            self.enterPending(vehicle: vehicle)
+        }
+    }
+
+    nonisolated func bleService(_ service: BLEService, didExitRegionForVehicle beaconUUID: String) {
+        Task { @MainActor in
+            // exit event during pending means I walked away without driving
+            if case .pending(let vehicle) = self.state, vehicle.beaconUUID == beaconUUID {
+                self.cancelPending(vehicle: vehicle)
+            }
+        }
+    }
+
     nonisolated func bleService(_ service: BLEService, beaconPresenceChanged isPresent: Bool) {
         Task { @MainActor in
-            if isPresent, case .stopping(let session) = self.state {
-                self.cancelStoppingCountdown(for: session)
+            if isPresent {
+                if case .stopping(let session) = self.state {
+                    self.cancelStoppingCountdown(for: session)
+                }
             }
+            // absence alone doesn't end the session — LocationService immobility fires that
         }
     }
 }
@@ -134,12 +170,29 @@ extension SessionManager: BLEServiceDelegate {
 // MARK: - LocationServiceDelegate
 
 extension SessionManager: LocationServiceDelegate {
+
     nonisolated func locationService(_ service: LocationService, didUpdate location: CLLocation) {
         Task { @MainActor in
-            guard case .active(let session) = self.state else { return }
-            let point = TripPoint(location: location, session: session)
-            self.modelContext.insert(point)
-            self.updateSessionMetrics(session: session, newPoint: point)
+            switch self.state {
+            case .pending(let vehicle):
+                // count consecutive readings above the driving threshold
+                if location.speed >= self.drivingSpeedThresholdMps {
+                    self.drivingConfirmationCount += 1
+                    if self.drivingConfirmationCount >= self.confirmationsRequired {
+                        self.confirmAndStartSession(vehicle: vehicle)
+                    }
+                } else {
+                    self.drivingConfirmationCount = 0
+                }
+
+            case .active(let session):
+                let point = TripPoint(location: location, session: session)
+                self.modelContext.insert(point)
+                self.updateSessionMetrics(session: session, newPoint: point)
+
+            default:
+                break
+            }
         }
     }
 
@@ -153,11 +206,11 @@ extension SessionManager: LocationServiceDelegate {
     }
 
     private func updateSessionMetrics(session: DrivingSession, newPoint: TripPoint) {
-        guard let prevPoint = session.points.dropLast().last else { return }
-        let prev = CLLocation(latitude: prevPoint.latitude, longitude: prevPoint.longitude)
-        let curr = CLLocation(latitude: newPoint.latitude, longitude: newPoint.longitude)
-        session.distanceKm += prev.distance(from: curr) / 1000.0
-        let deltaSpeed = newPoint.speedMps - prevPoint.speedMps
+        guard let prev = session.points.dropLast().last else { return }
+        let prevLocation = CLLocation(latitude: prev.latitude, longitude: prev.longitude)
+        let currLocation = CLLocation(latitude: newPoint.latitude, longitude: newPoint.longitude)
+        session.distanceKm += prevLocation.distance(from: currLocation) / 1000.0
+        let deltaSpeed = newPoint.speedMps - prev.speedMps
         if deltaSpeed > 2.2 { session.aggressiveAccelEvents += 1 }
         if deltaSpeed < -2.2 { session.hardBrakeEvents += 1 }
     }

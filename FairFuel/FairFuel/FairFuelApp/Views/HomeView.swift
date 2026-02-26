@@ -13,14 +13,6 @@ struct HomeView: View {
             }
             .padding()
             .navigationTitle("FairFuel")
-            .alert("NFC Error", isPresented: Binding(
-                get: { sessionManager.nfcError != nil },
-                set: { if !$0 { sessionManager.nfcError = nil } }
-            )) {
-                Button("OK") { sessionManager.nfcError = nil }
-            } message: {
-                Text(sessionManager.nfcError ?? "")
-            }
         }
     }
 
@@ -30,12 +22,8 @@ struct HomeView: View {
         case .idle:
             idleView
 
-        case .starting:
-            VStack(spacing: 16) {
-                ProgressView()
-                Text("Starting session…")
-                    .foregroundStyle(.secondary)
-            }
+        case .pending(let vehicle):
+            pendingView(vehicle: vehicle)
 
         case .active(let session):
             ActiveSessionView(session: session)
@@ -43,10 +31,10 @@ struct HomeView: View {
         case .stopping(let session):
             VStack(spacing: 16) {
                 ActiveSessionView(session: session)
-                Text("Ending in 10 seconds…")
+                Text("Ending session in 10 seconds…")
                     .font(.caption)
                     .foregroundStyle(.orange)
-                Button("Keep Session", role: .cancel) {
+                Button("Keep Session Active", role: .cancel) {
                     sessionManager.endSessionManually()
                 }
             }
@@ -56,7 +44,7 @@ struct HomeView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 60))
                     .foregroundStyle(.green)
-                Text("Session saved.")
+                Text("Trip saved.")
                     .font(.title3)
             }
         }
@@ -68,24 +56,39 @@ struct HomeView: View {
                 .font(.system(size: 90))
                 .foregroundStyle(.blue)
 
-            VStack(spacing: 4) {
-                Text("No Active Session")
-                    .font(.title2)
-                    .bold()
+            VStack(spacing: 6) {
+                Text("Ready to Drive")
+                    .font(.title2).bold()
                 if let name = profiles.first?.name {
-                    Text("Driving as \(name)")
+                    Text("Logged in as \(name)")
                         .foregroundStyle(.secondary)
                 }
+                Text("Get close to your car and the app will detect it automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+        }
+    }
+
+    private func pendingView(vehicle: Vehicle) -> some View {
+        VStack(spacing: 20) {
+            ProgressView()
+                .scaleEffect(1.4)
+
+            VStack(spacing: 6) {
+                Text(vehicle.name)
+                    .font(.title2).bold()
+                Text("Detected nearby — confirming you're driving…")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
 
-            Button(action: { sessionManager.scanToStartSession() }) {
-                Label("Tap Vehicle Tag to Start", systemImage: "wave.3.right")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(.blue)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            Button("Cancel", role: .cancel) {
+                sessionManager.endSessionManually()
             }
+            .buttonStyle(.bordered)
         }
     }
 }
@@ -96,7 +99,6 @@ private struct ActiveSessionView: View {
     let session: DrivingSession
     @EnvironmentObject private var sessionManager: SessionManager
 
-    // Ticker to refresh elapsed time every second
     @State private var now = Date()
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -109,13 +111,13 @@ private struct ActiveSessionView: View {
             Text("Session Active")
                 .font(.title2).bold()
 
-            HStack(spacing: 32) {
+            HStack(spacing: 40) {
                 stat(label: "Distance", value: String(format: "%.1f km", session.distanceKm))
-                stat(label: "Duration", value: formatDuration(session.startTime, to: now))
+                stat(label: "Time", value: elapsed(from: session.startTime, to: now))
             }
 
-            if let vehicleName = session.vehicle?.name {
-                Text(vehicleName)
+            if let name = session.vehicle?.name {
+                Text(name)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -135,9 +137,11 @@ private struct ActiveSessionView: View {
         }
     }
 
-    private func formatDuration(_ start: Date, to end: Date) -> String {
-        let secs = Int(end.timeIntervalSince(start))
-        let h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    private func elapsed(from start: Date, to end: Date) -> String {
+        let s = Int(end.timeIntervalSince(start))
+        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, sec)
+            : String(format: "%d:%02d", m, sec)
     }
 }
