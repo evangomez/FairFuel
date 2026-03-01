@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct HomeView: View {
     @EnvironmentObject private var sessionManager: SessionManager
