@@ -2,7 +2,11 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var sessionManager: SessionManager
-    @Query var profiles: [DriverProfile]
+    @Query private var profiles: [DriverProfile]
+
+    init() {
+        _profiles = Query()
+    }
 
     var body: some View {
         NavigationStack {
