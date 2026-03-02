@@ -18,8 +18,33 @@ struct HomeView: View {
             }
             .padding()
             .navigationTitle("FairFuel")
+            #if DEBUG
+            .toolbar {
+                ToolbarItem(placement: .bottomBar) {
+                    debugToolbar
+                }
+            }
+            #endif
         }
     }
+
+    #if DEBUG
+    private var debugToolbar: some View {
+        Menu("Debug") {
+            Button("Simulate Beacon Detected") {
+                sessionManager.simulateBeaconEntry()
+            }
+            Button("Simulate Driving Confirmed") {
+                sessionManager.simulateDrivingConfirmed()
+            }
+            Button("Simulate Beacon Lost") {
+                sessionManager.simulateBeaconExit()
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.orange)
+    }
+    #endif
 
     @ViewBuilder
     private var stateView: some View {

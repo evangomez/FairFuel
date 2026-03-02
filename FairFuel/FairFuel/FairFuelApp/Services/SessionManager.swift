@@ -81,6 +81,7 @@ final class SessionManager: NSObject, ObservableObject {
         state = .pending(vehicle)
         locationService.startTracking()
         bleService.startRanging(beaconUUID: vehicle.beaconUUID)
+        print("[Session] Pending — beacon detected for \(vehicle.name)")
     }
 
     private func cancelPending(vehicle: Vehicle) {
@@ -98,6 +99,7 @@ final class SessionManager: NSObject, ObservableObject {
         let session = DrivingSession(driver: driver, vehicle: vehicle)
         modelContext.insert(session)
         state = .active(session)
+        print("[Session] Active — started for \(driver.name) in \(vehicle.name)")
     }
 
     private func beginStoppingCountdown(for session: DrivingSession) {
@@ -127,12 +129,46 @@ final class SessionManager: NSObject, ObservableObject {
         }
         locationService.stopTracking()
         try? modelContext.save()
+        print("[Session] Ended — %.2f km, %.3f L estimated", session.distanceKm, session.estimatedFuelLiters)
         state = .ended
         Task {
             try? await Task.sleep(for: .seconds(1))
             state = .idle
         }
     }
+
+    // MARK: - Debug
+
+    #if DEBUG
+    // Simulates walking up to the car without needing real beacon hardware.
+    // Only available in debug builds.
+    func simulateBeaconEntry() {
+        guard let vehicle = (try? modelContext.fetch(FetchDescriptor<Vehicle>()))?.first else {
+            print("[Debug] No vehicle saved — add one first in Profile & Vehicles")
+            return
+        }
+        print("[Debug] Simulating beacon entry for \(vehicle.name)")
+        enterPending(vehicle: vehicle)
+    }
+
+    func simulateBeaconExit() {
+        print("[Debug] Simulating beacon exit")
+        switch state {
+        case .pending(let vehicle): cancelPending(vehicle: vehicle)
+        case .active(let session): beginStoppingCountdown(for: session)
+        default: break
+        }
+    }
+
+    func simulateDrivingConfirmed() {
+        guard case .pending(let vehicle) = state else {
+            print("[Debug] Not in pending state")
+            return
+        }
+        print("[Debug] Simulating driving confirmed")
+        confirmAndStartSession(vehicle: vehicle)
+    }
+    #endif
 }
 
 // MARK: - BLEServiceDelegate

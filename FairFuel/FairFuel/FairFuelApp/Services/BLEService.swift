@@ -46,9 +46,9 @@ final class BLEService: NSObject {
 
         monitoredRegions[beaconUUID] = region
         locationManager.startMonitoring(for: region)
-
-        // check immediately in case we're already inside the region
         locationManager.requestState(for: region)
+
+        print("[BLE] Started monitoring region for UUID: \(beaconUUID)")
     }
 
     func stopMonitoringRegion(beaconUUID: String) {
@@ -114,17 +114,19 @@ extension BLEService: CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         guard let uuid = beaconUUID(from: region) else { return }
+        print("[BLE] Entered region — UUID: \(uuid)")
         delegate?.bleService(self, didEnterRegionForVehicle: uuid)
     }
 
     func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
         guard let uuid = beaconUUID(from: region) else { return }
+        print("[BLE] Exited region — UUID: \(uuid)")
         delegate?.bleService(self, didExitRegionForVehicle: uuid)
     }
 
-    // called by requestState(for:) on app launch — handles the case where
-    // the app was killed and relaunched while I'm already inside the beacon region
     func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
+        let stateLabel = state == .inside ? "inside" : state == .outside ? "outside" : "unknown"
+        print("[BLE] Region state determined: \(stateLabel)")
         guard state == .inside, let uuid = beaconUUID(from: region) else { return }
         delegate?.bleService(self, didEnterRegionForVehicle: uuid)
     }
