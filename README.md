@@ -1,71 +1,86 @@
 # FairFuel
 
-A multi-driver gas usage tracking system using NFC and Bluetooth Low Energy.
+An iOS app that fairly splits fuel costs among drivers who share a vehicle, using BLE beacon auto-detection and GPS trip tracking.
 
-## Project Summary
+## What It Does
 
-FairFuel is a vehicle-agnostic iOS app that fairly attributes fuel costs among multiple drivers of a shared vehicle. Drivers identify themselves by scanning an NFC tag inside the car. A BLE beacon detects when a driver has left. GPS data during the trip estimates relative fuel consumption based on distance, idle time, and driving behavior.
+FairFuel solves the "who drove how much?" problem for families and housemates sharing a car. A small iBeacon-compatible hardware beacon mounted inside the vehicle triggers trip tracking automatically — no buttons to tap. GPS records distance, idle time, and driving behavior. When someone fills up the tank, the app splits the cost proportionally based on each driver's estimated fuel consumption.
 
-## Weekly Build Plan
+- **Automatic trip start/end**: phone detects the in-car beacon via BLE; no manual interaction required
+- **GPS tracking**: distance, idle time, aggressive acceleration, hard braking
+- **Fuel cost splitting**: proportional by estimated consumption since the last fill-up
+- **Group sync**: household members share a group code; costs are split across all drivers
 
-| Week | Focus | Status |
-|------|-------|--------|
-| 1 | Requirements & Research | ✅ Complete |
-| 2 | Architecture & Design | ✅ Complete |
-| 3 | NFC Driver Identification | Pending |
-| 4 | BLE Proximity Detection | Pending |
-| 5 | Trip Tracking & GPS | Pending |
-| 6 | Fuel Estimation Model | Pending |
-| 7 | Cost Allocation & UI | Pending |
-| 8 | Testing & Final Report | Pending |
-
-## Project Structure
+## Architecture
 
 ```
-FairFuel/
-├── docs/
-│   ├── week1-research-and-requirements.md
-│   └── week2-architecture-and-design.md
-└── FairFuelApp/
-    ├── App/
-    │   └── FairFuelApp.swift          # App entry point, SwiftData container
-    ├── Models/
-    │   ├── Driver.swift               # @Model: driver profile + NFC tag ID
-    │   ├── DrivingSession.swift       # @Model: trip record per driver
-    │   ├── TripPoint.swift            # @Model: GPS sample during session
-    │   └── FuelEntry.swift            # @Model: refueling event
-    ├── Services/
-    │   ├── NFCService.swift           # Core NFC tag reading + payload parsing
-    │   ├── BLEService.swift           # iBeacon ranging for proximity detection
-    │   ├── LocationService.swift      # GPS tracking + immobility detection
-    │   ├── SessionManager.swift       # State machine orchestrating all services
-    │   └── FuelEstimator.swift        # Fuel consumption estimation (placeholder)
-    └── Views/
-        ├── ContentView.swift          # TabView shell
-        ├── HomeView.swift             # Active session screen (Week 7)
-        ├── DriversView.swift          # Driver list (Week 3)
-        └── FuelView.swift             # Fuel entries (Week 7)
+FairFuelApp/
+├── App/
+│   └── FairFuelApp.swift          # App entry, SwiftData container with file protection
+├── Models/
+│   ├── Driver.swift               # @Model: local driver profile (one per device)
+│   ├── Vehicle.swift              # @Model: vehicle + beacon UUID + fuel efficiency
+│   ├── DrivingSession.swift       # @Model: trip record with summary metrics
+│   ├── TripPoint.swift            # @Model: GPS sample (purged after session finalizes)
+│   └── FuelEntry.swift            # @Model: fill-up event (liters, cost, odometer)
+├── Services/
+│   ├── BLEService.swift           # iBeacon region monitoring and ranging
+│   ├── LocationService.swift      # GPS tracking with accuracy filtering
+│   ├── SessionManager.swift       # State machine: idle→pending→active→stopping→ended
+│   ├── FuelEstimator.swift        # Fuel consumption model (distance + idle + events)
+│   ├── KeychainService.swift      # Keychain save/load/delete (ready for backend auth)
+│   ├── CloudKitService.swift      # Supabase REST client for group sync
+│   ├── GroupManager.swift         # Group code creation/join
+│   ├── NotificationService.swift  # Local notifications + background refresh
+│   ├── OfflineQueue.swift         # Retry queue for failed sync requests
+│   ├── Units.swift                # Unit conversions (km↔mi, L↔gal, MPG↔L/100km)
+│   ├── Double+Units.swift         # Double extension: distanceDisplay, fuelDisplay
+│   └── VehicleDatabase.swift      # EPA MPG lookup table (~1000 models)
+└── Views/
+    ├── HomeView.swift             # Active session screen with debug simulation menu
+    ├── DriversView.swift          # Profile + vehicle management
+    ├── FuelView.swift             # Fill-up history + current tank cost estimate
+    ├── AddFuelEntryView.swift     # Log a fill-up (gallons, cost, odometer)
+    ├── AddVehicleView.swift       # Add vehicle with make/model/year/MPG lookup
+    ├── EditVehicleView.swift      # Edit vehicle settings
+    ├── TripHistoryView.swift      # Trip log with metrics
+    ├── CostSplitView.swift        # Per-driver cost breakdown for a fill-up
+    ├── AddManualTripView.swift    # Manual trip entry without beacon
+    ├── EditTripView.swift         # Edit a saved trip
+    └── GroupSetupView.swift       # Create / join a household group
 ```
-
-## Setup (Xcode)
-
-1. Create a new Xcode project: **iOS App**, Swift, SwiftUI.
-2. Set deployment target to **iOS 17.0**.
-3. Add all `.swift` files from `FairFuelApp/` to the project target.
-4. Add required entitlements in the `.entitlements` file:
-   - `com.apple.developer.nfc.readersession.formats` → `["NDEF"]`
-5. Add required `Info.plist` keys:
-   - `NFCReaderUsageDescription` — why NFC is used
-   - `NSLocationAlwaysAndWhenInUseUsageDescription` — why location is always needed
-   - `NSLocationWhenInUseUsageDescription`
-   - `NSBluetoothAlwaysUsageDescription`
-6. Enable background modes: **Location updates**, **Uses Bluetooth LE accessories**.
-7. Build and run on a physical iPhone (NFC and BLE do not work in the simulator).
 
 ## Hardware Requirements
 
-- **NFC tags**: NTAG213 or NTAG215 stickers (~$0.50 each). One per driver.
-  - Write the payload `fairfuel://driver/<UUID>` using an NFC writing app or the app's built-in writer (Week 3).
-- **BLE beacon**: Any iBeacon-compatible beacon (Estimote, Kontakt.io, or a custom ESP32/nRF52 device).
-  - Configure with UUID `E2C56DB5-DFFB-48D2-B060-D0F5A71096E0` (or update `BLEService.beaconUUID`).
-  - Mount inside the vehicle and power via USB or battery.
+- **BLE beacon**: any iBeacon-compatible beacon (MINEW, Estimote, Kontakt.io, or ESP32/nRF52)
+  - Mount inside the vehicle; power via USB or battery
+  - Note the beacon's UUID from the manufacturer's app (e.g. BeaconSET for MINEW)
+  - Enter the UUID in the app when adding a vehicle
+
+Physical device required — BLE and GPS do not work in the iOS Simulator.
+
+## Setup (Xcode)
+
+1. Open `FairFuel.xcodeproj` in Xcode.
+2. Set the deployment target to **iOS 18.2** or later.
+3. Ensure the app target includes `PrivacyInfo.xcprivacy` as a resource (add via Xcode if missing).
+4. Build and run on a physical iPhone.
+
+The app can be fully tested without hardware using the **Debug menu** in the bottom toolbar of the Session tab, which simulates beacon detection and driving confirmation.
+
+## Security Notes
+
+**Beacon spoofing**: iBeacon UUIDs are broadcast in plaintext. The beacon identifies the vehicle — it is not an authentication token. Local trip data can be triggered by a spoofed beacon, but the Supabase backend enforces Row Level Security: only users with a `memberships` row for a vehicle can write trips to it. See `SessionManager.enterPending()` for the security contract comment.
+
+**Data storage**: The SwiftData store is opened with `FileProtectionType.completeUntilFirstUserAuthentication`. Raw GPS breadcrumbs (`TripPoint` records) are deleted after each session is finalized; only the summary metrics are kept.
+
+**Auth tokens**: `KeychainService` stores auth tokens with `kSecAttrAccessibleAfterFirstUnlock` (not `kSecAttrAccessibleWhenUnlocked`) so background token refresh works during active trips.
+
+## Roadmap
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| 1 | Local app hardening (BLE-only, file protection, privacy manifest) | ✅ Complete |
+| 2 | Supabase backend, Sign in with Apple, household invites, Realtime sync | Planned |
+| 3 | StoreKit 2 / RevenueCat — FairFuel Pro analytics & export | Planned |
+| 4 | App Store submission | Planned |

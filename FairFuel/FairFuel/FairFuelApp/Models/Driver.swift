@@ -3,7 +3,7 @@ import SwiftData
 
 // The local driver profile stored on this device.
 // There is exactly one DriverProfile per phone — the phone's owner.
-// Driver identity comes from the device, not from the NFC tag.
+// Driver identity is scoped to this device; the beacon identifies the vehicle, not the driver.
 @Model
 final class DriverProfile {
     var id: UUID

@@ -90,6 +90,12 @@ final class SessionManager: NSObject, ObservableObject {
         try? modelContext.fetch(FetchDescriptor<DriverProfile>()).first
     }
 
+    // SECURITY CONTRACT: The beacon UUID identifies which vehicle is nearby.
+    // It is NOT an authentication token. iBeacon UUIDs are broadcast in plaintext
+    // and can be spoofed by anyone with Bluetooth. A spoofed beacon can put this
+    // device into pending state, but it cannot write trips to the server — Row Level
+    // Security on the trips table enforces that only users with a membership row for
+    // that vehicle can do so. Never treat beacon detection as proof of authorization.
     private func enterPending(vehicle: Vehicle) {
         guard case .idle = state else { return }
         drivingConfirmationCount = 0
@@ -157,6 +163,17 @@ final class SessionManager: NSObject, ObservableObject {
         session.endTime = Date()
         let efficiency = session.vehicle?.fuelEfficiencyLitersPer100Km ?? FuelEstimator.defaultLitersPer100Km
         session.estimatedFuelLiters = FuelEstimator.estimate(session: session, litersPer100Km: efficiency)
+
+        // Delete raw GPS breadcrumbs after summary metrics are computed. Precise lat/long
+        // for every GPS update is only needed while the session is active. DrivingSession
+        // already stores the derived summary (distanceKm, idleSeconds, event counts).
+        // Purging limits exposure of sensitive location history and keeps the database small.
+        // If route-replay is added in a future phase, remove this block and implement a
+        // user-controlled retention policy instead.
+        for point in session.points {
+            modelContext.delete(point)
+        }
+
         if let beaconUUID = session.vehicle?.beaconUUID {
             bleService.stopRanging(beaconUUID: beaconUUID)
             detectedBeaconUUIDs.remove(beaconUUID)

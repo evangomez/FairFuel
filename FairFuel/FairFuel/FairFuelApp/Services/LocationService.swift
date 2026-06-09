@@ -66,7 +66,11 @@ final class LocationService: NSObject {
 
 extension LocationService: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last, location.horizontalAccuracy >= 0 else { return }
+        // Reject negative accuracy (no fix) and readings worse than 50 m (too imprecise
+        // for distance and event detection — tunnels, urban canyons, GPS startup).
+        guard let location = locations.last,
+              location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= 50 else { return }
         handleSpeedUpdate(max(0, location.speed))
         delegate?.locationService(self, didUpdate: location)
     }
