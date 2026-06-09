@@ -15,6 +15,7 @@ struct HomeView: View {
                 Spacer()
                 stateView
                 Spacer()
+                beaconStatusRow
             }
             .padding()
             .navigationTitle("FairFuel")
@@ -80,6 +81,18 @@ struct HomeView: View {
         }
     }
 
+    private var beaconStatusRow: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(sessionManager.detectedBeaconUUIDs.isEmpty ? Color.gray.opacity(0.4) : Color.green)
+                .frame(width: 8, height: 8)
+            Text(sessionManager.detectedBeaconUUIDs.isEmpty ? "No beacon detected" : "Beacon in range")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.bottom, 4)
+    }
+
     private var idleView: some View {
         VStack(spacing: 24) {
             Image(systemName: "car.circle.fill")
@@ -142,7 +155,7 @@ private struct ActiveSessionView: View {
                 .font(.title2).bold()
 
             HStack(spacing: 40) {
-                stat(label: "Distance", value: String(format: "%.1f km", session.distanceKm))
+                stat(label: "Distance", value: Units.milesString(session.distanceKm))
                 stat(label: "Time", value: elapsed(from: session.startTime, to: now))
             }
 

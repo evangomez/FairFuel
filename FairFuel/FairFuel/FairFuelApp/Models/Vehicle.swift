@@ -8,6 +8,11 @@ final class Vehicle {
     var beaconUUID: String                      // iBeacon UUID from the physical beacon in the car
     var fuelEfficiencyLitersPer100Km: Double
 
+    // Optional fields added for make/model/year lookup (lightweight migration safe)
+    var year: Int?
+    var make: String?
+    var vehicleModel: String?
+
     @Relationship(deleteRule: .nullify)
     var sessions: [DrivingSession]
 

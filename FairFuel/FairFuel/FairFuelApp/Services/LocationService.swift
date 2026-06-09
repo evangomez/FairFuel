@@ -29,6 +29,9 @@ final class LocationService: NSObject {
         locationManager.activityType = .automotiveNavigation
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.allowsBackgroundLocationUpdates = true
+        #if os(iOS)
+        locationManager.showsBackgroundLocationIndicator = true
+        #endif
         locationManager.startUpdatingLocation()
         isTracking = true
     }

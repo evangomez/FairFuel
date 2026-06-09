@@ -22,9 +22,17 @@ final class BLEService: NSObject {
 
     private let locationManager = CLLocationManager()
 
+    // Separate manager for significant location changes — a low-battery always-on
+    // fallback that wakes the app (even from terminated) when the device moves ~500m.
+    // Because the beacon is IN the car, it's still in range while driving, so we
+    // can verify which vehicle via requestState when this fires.
+    private let significantLocationManager = CLLocationManager()
+    private var isMonitoringSignificantLocations = false
+
     override init() {
         super.init()
         locationManager.delegate = self
+        significantLocationManager.delegate = self
     }
 
     // MARK: - Region Monitoring
@@ -59,6 +67,21 @@ final class BLEService: NSObject {
 
     func stopAllMonitoring() {
         monitoredRegions.keys.forEach { stopMonitoringRegion(beaconUUID: $0) }
+    }
+
+    // MARK: - Significant Location Monitoring
+
+    func startSignificantLocationMonitoring() {
+        guard !isMonitoringSignificantLocations else { return }
+        isMonitoringSignificantLocations = true
+        significantLocationManager.startMonitoringSignificantLocationChanges()
+        print("[BLE] Started significant location monitoring")
+    }
+
+    func stopSignificantLocationMonitoring() {
+        guard isMonitoringSignificantLocations else { return }
+        isMonitoringSignificantLocations = false
+        significantLocationManager.stopMonitoringSignificantLocationChanges()
     }
 
     // MARK: - Ranging
@@ -111,6 +134,17 @@ final class BLEService: NSObject {
 // MARK: - CLLocationManagerDelegate
 
 extension BLEService: CLLocationManagerDelegate {
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard manager === significantLocationManager else { return }
+        // Significant movement detected — re-evaluate all beacon regions. Because the
+        // beacon is in the car with the user, it will still be in range while driving,
+        // so requestState fires didDetermineState → didEnterRegionForVehicle if inside.
+        print("[BLE] Significant location change — re-checking beacon regions")
+        for region in monitoredRegions.values {
+            locationManager.requestState(for: region)
+        }
+    }
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         guard let uuid = beaconUUID(from: region) else { return }

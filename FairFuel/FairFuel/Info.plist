@@ -2,10 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.fairfuel.refresh</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-peripheral</string>
 		<string>location</string>
+		<string>bluetooth-central</string>
+		<string>fetch</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>FairFuel uses your location to track trips and detect when you start driving.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>FairFuel needs Always location access to detect your car's beacon in the background and automatically start tracking when you get in.</string>
 </dict>
 </plist>

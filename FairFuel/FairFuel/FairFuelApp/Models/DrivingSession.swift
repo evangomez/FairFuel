@@ -11,6 +11,7 @@ final class DrivingSession {
     var aggressiveAccelEvents: Int
     var hardBrakeEvents: Int
     var estimatedFuelLiters: Double
+    var isManual: Bool = false
 
     var driver: DriverProfile?
     var vehicle: Vehicle?
@@ -34,6 +35,21 @@ final class DrivingSession {
         self.aggressiveAccelEvents = 0
         self.hardBrakeEvents = 0
         self.estimatedFuelLiters = 0
+        self.driver = driver
+        self.vehicle = vehicle
+        self.points = []
+    }
+
+    init(driver: DriverProfile, vehicle: Vehicle?, isManual: Bool) {
+        self.id = UUID()
+        self.startTime = Date()
+        self.endTime = nil
+        self.distanceKm = 0
+        self.idleSeconds = 0
+        self.aggressiveAccelEvents = 0
+        self.hardBrakeEvents = 0
+        self.estimatedFuelLiters = 0
+        self.isManual = isManual
         self.driver = driver
         self.vehicle = vehicle
         self.points = []
