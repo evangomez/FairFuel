@@ -3,43 +3,47 @@ import Foundation
 final class GroupManager: ObservableObject {
     static let shared = GroupManager()
 
-    private let key = "groupID"
+    @Published private(set) var vehicleIDs: [String] = []
 
-    @Published private(set) var groupID: String?
+    var hasGroup: Bool { !vehicleIDs.isEmpty }
 
-    var displayCode: String? {
-        guard let id = groupID, id.count == 8 else { return groupID }
-        return "\(id.prefix(4))-\(id.suffix(4))"
-    }
+    /// Compatibility shim: returns the first vehicle ID, or nil if no memberships.
+    /// Do-not-touch files (AddManualTripView, AddFuelEntryView, EditVehicleView,
+    /// CostSplitView, NotificationService) still reference groupID — this keeps them compiling.
+    var groupID: String? { vehicleIDs.first }
 
-    private init() {
-        groupID = UserDefaults.standard.string(forKey: key)
-    }
+    private init() {}
 
-    func createGroup() {
-        // Excludes 0/O, 1/I/L to prevent mix-ups when sharing codes
-        let chars = Array("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
-        let id = String((0..<8).map { _ in chars.randomElement()! })
-        store(id)
-    }
-
-    /// Returns `true` if the code was valid and stored.
-    func join(code: String) -> Bool {
-        let clean = code.uppercased().replacingOccurrences(of: "-", with: "")
-        guard clean.count == 8, clean.allSatisfy({ $0.isLetter || $0.isNumber }) else {
-            return false
+    /// Fetches vehicles the current user has membership for and updates vehicleIDs.
+    func fetchMemberships() async {
+        let vehicles = await CloudKitService.shared.fetchMemberVehicles()
+        await MainActor.run {
+            vehicleIDs = vehicles.map { $0.id }
         }
-        store(clean)
-        return true
+        print("[GroupManager] fetchMemberships — \(vehicleIDs.count) vehicle(s)")
     }
 
-    func leaveGroup() {
-        UserDefaults.standard.removeObject(forKey: key)
-        groupID = nil
+    /// Generates a server-side invite code for the given vehicleID.
+    /// Returns a formatted XXXX-XXXX code on success.
+    func createInvite(vehicleID: String) async -> String? {
+        return await CloudKitService.shared.createInvite(vehicleID: vehicleID)
     }
 
-    private func store(_ id: String) {
-        UserDefaults.standard.set(id, forKey: key)
-        groupID = id
+    /// Redeems an invite code. Returns the vehicle name on success, nil on failure.
+    func redeemInvite(code: String) async -> String? {
+        guard let result = await CloudKitService.shared.redeemInvite(code: code) else { return nil }
+        // Add newly joined vehicle to local list
+        await MainActor.run {
+            if !vehicleIDs.contains(result.vehicleID) {
+                vehicleIDs.append(result.vehicleID)
+            }
+        }
+        return result.vehicleName
+    }
+
+    /// Clears vehicle membership state (call on sign-out).
+    func clearMemberships() {
+        vehicleIDs = []
+        print("[GroupManager] Memberships cleared")
     }
 }

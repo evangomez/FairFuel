@@ -13,6 +13,8 @@ struct FairFuelApp: App {
         self.sessionManager = SessionManager(modelContext: container.mainContext)
         NotificationService.shared.requestPermission()
         NotificationService.shared.registerBackgroundTask(container: container)
+        // Refresh auth token on launch so background trip sync has a valid token
+        Task { await AuthService.shared.refreshIfNeeded() }
     }
 
     var body: some Scene {
