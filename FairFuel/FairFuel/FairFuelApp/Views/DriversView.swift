@@ -7,16 +7,18 @@ struct DriversView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var sessionManager: SessionManager
     @ObservedObject private var groupManager = GroupManager.shared
+    @ObservedObject private var authService = AuthService.shared
     @State private var showAddVehicle = false
     @State private var editingVehicle: Vehicle? = nil
     @State private var showGroupSetup: GroupSetupView.Mode? = nil
     @State private var isEditingName = false
     @State private var editingNameText = ""
-    @State private var groupVehicles: [RemoteVehicle] = []
+    @State private var memberVehicles: [RemoteVehicle] = []
 
+    /// Vehicles the user has server-side membership for but hasn't adopted locally yet.
     private var unadoptedGroupVehicles: [RemoteVehicle] {
-        let localUUIDs = Set(vehicles.map { $0.beaconUUID.uppercased() })
-        return groupVehicles.filter { !localUUIDs.contains($0.beaconUUID.uppercased()) }
+        let localIDs = Set(vehicles.map { $0.id.uuidString.lowercased() })
+        return memberVehicles.filter { !localIDs.contains($0.id.lowercased()) }
     }
 
     var body: some View {
@@ -66,6 +68,12 @@ struct DriversView: View {
                                       ? Color.green : Color.gray.opacity(0.3))
                                 .frame(width: 10, height: 10)
                         }
+                        .swipeActions(edge: .trailing) {
+                            Button("Invite") {
+                                showGroupSetup = .create(vehicleID: vehicle.id.uuidString, vehicleName: vehicle.name)
+                            }
+                            .tint(.green)
+                        }
                         .swipeActions(edge: .leading) {
                             Button("Edit") { editingVehicle = vehicle }
                                 .tint(.blue)
@@ -104,37 +112,28 @@ struct DriversView: View {
                             .padding(.vertical, 2)
                         }
                     } header: {
-                        Text("Group Vehicles")
+                        Text("Shared Vehicles")
                     } footer: {
-                        Text("Vehicles from other group members. Tap Adopt to add to your device.")
+                        Text("Vehicles you have membership for. Tap Adopt to add to your device for beacon detection.")
                     }
                 }
 
-                Section("Group") {
-                    if let code = groupManager.displayCode {
-                        LabeledContent("Group Code") {
-                            Text(code)
-                                .font(.system(.body, design: .monospaced))
-                                .fontWeight(.semibold)
-                        }
-                        ShareLink(item: "Join my FairFuel group! Code: \(code)") {
-                            Label("Share Code", systemImage: "square.and.arrow.up")
-                        }
-                        Button(role: .destructive) {
-                            groupManager.leaveGroup()
-                        } label: {
-                            Label("Leave Group", systemImage: "person.badge.minus")
-                        }
-                    } else {
-                        Button {
-                            showGroupSetup = .create
-                        } label: {
-                            Label("Create Group", systemImage: "person.badge.plus")
+                Section("Sharing") {
+                    if groupManager.hasGroup {
+                        LabeledContent("Member of") {
+                            Text("\(groupManager.vehicleIDs.count) vehicle(s)")
+                                .foregroundStyle(.secondary)
                         }
                         Button {
                             showGroupSetup = .join
                         } label: {
-                            Label("Join Group", systemImage: "person.2")
+                            Label("Join Another Vehicle", systemImage: "person.2")
+                        }
+                    } else {
+                        Button {
+                            showGroupSetup = .join
+                        } label: {
+                            Label("Join a Vehicle", systemImage: "person.2")
                         }
                     }
                 }
@@ -149,16 +148,15 @@ struct DriversView: View {
             .sheet(item: $showGroupSetup) { mode in
                 GroupSetupView(mode: mode)
             }
-            .task(id: groupManager.groupID) {
-                guard let groupID = groupManager.groupID else {
-                    groupVehicles = []
-                    return
-                }
-                // Push all local vehicles so devices that joined before adding vehicles still sync
+            .task(id: groupManager.vehicleIDs.description) {
+                guard authService.isAuthenticated else { return }
+                // Push all local vehicles to server and refresh memberships
                 for vehicle in vehicles {
-                    await CloudKitService.shared.pushVehicle(vehicle, groupID: groupID)
+                    await CloudKitService.shared.pushVehicle(vehicle)
                 }
-                groupVehicles = await CloudKitService.shared.fetchVehicles(groupID: groupID)
+                await GroupManager.shared.fetchMemberships()
+                // Fetch all member vehicles for the unadopted section
+                memberVehicles = await CloudKitService.shared.fetchMemberVehicles()
             }
         }
     }
@@ -180,7 +178,7 @@ struct DriversView: View {
         modelContext.insert(vehicle)
         try? modelContext.save()
         sessionManager.beginMonitoring(vehicle: vehicle)
-        groupVehicles.removeAll { $0.id == remote.id }
+        memberVehicles.removeAll { $0.id == remote.id }
     }
 
     private func deleteVehicles(at offsets: IndexSet) {
@@ -193,10 +191,10 @@ struct DriversView: View {
 }
 
 extension GroupSetupView.Mode: Identifiable {
-    public var id: Int {
+    public var id: String {
         switch self {
-        case .create: return 0
-        case .join: return 1
+        case .create(let vehicleID, _): return "create-\(vehicleID)"
+        case .join: return "join"
         }
     }
 }

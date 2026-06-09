@@ -146,9 +146,9 @@ struct AddVehicleView: View {
         modelContext.insert(vehicle)
         try? modelContext.save()
         sessionManager.beginMonitoring(vehicle: vehicle)
-        if let groupID = GroupManager.shared.groupID {
+        if AuthService.shared.isAuthenticated {
             let captured = vehicle
-            Task { await CloudKitService.shared.pushVehicle(captured, groupID: groupID) }
+            Task { await CloudKitService.shared.pushVehicle(captured) }
         }
         dismiss()
     }

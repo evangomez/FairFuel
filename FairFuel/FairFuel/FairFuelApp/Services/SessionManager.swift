@@ -180,8 +180,8 @@ final class SessionManager: NSObject, ObservableObject {
         }
         locationService.stopTracking()
         try? modelContext.save()
-        if let groupID = GroupManager.shared.groupID {
-            Task { await CloudKitService.shared.pushSession(session, groupID: groupID) }
+        if let vehicleID = session.vehicle?.id.uuidString, AuthService.shared.isAuthenticated {
+            Task { await CloudKitService.shared.pushTrip(session, vehicleID: vehicleID) }
         }
         print("[Session] Ended — %.2f km, %.3f L estimated", session.distanceKm, session.estimatedFuelLiters)
         state = .ended

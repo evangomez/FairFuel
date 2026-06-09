@@ -1,12 +1,15 @@
 import SwiftUI
 import SwiftData
 
-// Root view: shows onboarding on first launch, tabs once a profile exists.
+// Root view: shows auth gate first, then onboarding on first launch, tabs once a profile exists.
 struct RootView: View {
+    @StateObject private var authService = AuthService.shared
     @Query var profiles: [DriverProfile]
 
     var body: some View {
-        if profiles.isEmpty {
+        if !authService.isAuthenticated {
+            AuthView()
+        } else if profiles.isEmpty {
             OnboardingView()
         } else {
             ContentView()

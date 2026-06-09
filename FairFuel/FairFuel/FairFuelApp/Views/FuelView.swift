@@ -19,7 +19,7 @@ struct FuelView: View {
                 } else {
                     List {
                         Section {
-                            CurrentTankCard(entry: entries[0])
+                            CurrentTankCard(entry: entries[0], vehicleIDs: groupManager.vehicleIDs)
                                 .listRowInsets(EdgeInsets())
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
@@ -67,12 +67,17 @@ struct FuelView: View {
             .sheet(isPresented: $showAddEntry) {
                 AddFuelEntryView()
             }
-            .task(id: groupManager.groupID) {
-                guard let groupID = groupManager.groupID else { return }
+            .task(id: groupManager.vehicleIDs.description) {
+                let vehicleIDs = groupManager.vehicleIDs
+                guard !vehicleIDs.isEmpty else { return }
+                // Push local entries to the server for each vehicle this user owns
                 for entry in entries {
-                    await CloudKitService.shared.pushFillUp(entry, groupID: groupID)
+                    // Only push entries where we know the vehicle — use first owned vehicle as fallback
+                    if let firstVehicleID = vehicleIDs.first {
+                        await CloudKitService.shared.pushFuelEntry(entry, vehicleID: firstVehicleID)
+                    }
                 }
-                let remote = await CloudKitService.shared.fetchFillUps(groupID: groupID)
+                let remote = await CloudKitService.shared.fetchFuelEntries(vehicleIDs: vehicleIDs)
                 var changed = false
                 for r in remote {
                     if let existing = entries.first(where: { $0.id.uuidString == r.id }) {
@@ -99,9 +104,9 @@ struct FuelView: View {
 
 private struct CurrentTankCard: View {
     let entry: FuelEntry
+    let vehicleIDs: [String]
 
     @Query(sort: \DrivingSession.startTime) private var allSessions: [DrivingSession]
-    @ObservedObject private var groupManager = GroupManager.shared
     @State private var showGaugeInput = false
     @State private var gaugeText = ""
     @State private var remoteSessions: [RemoteSession] = []
@@ -197,7 +202,7 @@ private struct CurrentTankCard: View {
                     }
                 }
                 if usingRemote {
-                    Label("Includes trips from all group members", systemImage: "icloud")
+                    Label("Includes trips from all vehicle members", systemImage: "icloud")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -246,19 +251,19 @@ private struct CurrentTankCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
-        .task(id: groupManager.groupID) {
+        .task(id: vehicleIDs.description) {
             await fetchRemoteSessions()
         }
     }
 
     private func fetchRemoteSessions() async {
-        guard let groupID = groupManager.groupID else {
+        guard !vehicleIDs.isEmpty else {
             remoteSessions = []
             return
         }
         isLoadingRemote = true
-        let fetched = await CloudKitService.shared.fetchSessions(
-            groupID: groupID,
+        let fetched = await CloudKitService.shared.fetchTrips(
+            vehicleIDs: vehicleIDs,
             since: entry.date,
             until: Date()
         )

@@ -1,26 +1,50 @@
 import SwiftUI
 
 struct GroupSetupView: View {
-    enum Mode { case create, join }
+    enum Mode {
+        case create(vehicleID: String, vehicleName: String)
+        case join
+    }
 
     let mode: Mode
     @Environment(\.dismiss) private var dismiss
 
+    // Create mode state
     @State private var generatedCode: String? = nil
+    @State private var isGenerating = false
+
+    // Join mode state
     @State private var joinInput: String = ""
     @State private var joinError: String? = nil
     @State private var joinedSuccessfully = false
+    @State private var joinedVehicleName: String? = nil
+    @State private var isJoining = false
+
+    private var isCreateMode: Bool {
+        if case .create = mode { return true }
+        return false
+    }
+
+    private var createVehicleID: String {
+        if case .create(let vehicleID, _) = mode { return vehicleID }
+        return ""
+    }
+
+    private var createVehicleName: String {
+        if case .create(_, let vehicleName) = mode { return vehicleName }
+        return ""
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                if mode == .create {
+                if isCreateMode {
                     createSection
                 } else {
                     joinSection
                 }
             }
-            .navigationTitle(mode == .create ? "Create Group" : "Join Group")
+            .navigationTitle(isCreateMode ? "Invite to \(createVehicleName)" : "Join a Vehicle")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -35,19 +59,19 @@ struct GroupSetupView: View {
     private var createSection: some View {
         Group {
             Section {
-                Text("Generate a code and share it with your household. Anyone who enters it will see your trips in cost splits.")
+                Text("Generate a time-limited invite code and share it with a household member. They can use it to join \(createVehicleName) and see shared trips.")
                     .foregroundStyle(.secondary)
                     .font(.callout)
             }
 
             if let code = generatedCode {
-                Section("Your Group Code") {
+                Section("Invite Code") {
                     HStack {
                         Text(code)
                             .font(.system(.title2, design: .monospaced))
                             .fontWeight(.semibold)
                         Spacer()
-                        ShareLink(item: "Join my FairFuel group! Code: \(code)") {
+                        ShareLink(item: "Join my FairFuel vehicle! Enter code: \(code)") {
                             Image(systemName: "square.and.arrow.up")
                         }
                         Button {
@@ -60,14 +84,36 @@ struct GroupSetupView: View {
                     }
                 }
                 Section {
+                    Text("This code expires in 7 days.")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                Section {
                     Button("Done") { dismiss() }
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
+            } else if isGenerating {
+                Section {
+                    HStack {
+                        ProgressView()
+                        Text("Generating…")
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 8)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
             } else {
                 Section {
-                    Button("Generate Code") {
-                        GroupManager.shared.createGroup()
-                        generatedCode = GroupManager.shared.displayCode
+                    Button("Generate Invite Code") {
+                        Task {
+                            isGenerating = true
+                            generatedCode = await GroupManager.shared.createInvite(vehicleID: createVehicleID)
+                            isGenerating = false
+                            if generatedCode == nil {
+                                // Surface error in a simple way — code generation failed
+                                print("[GroupSetupView] Failed to generate invite code")
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
@@ -80,12 +126,12 @@ struct GroupSetupView: View {
     private var joinSection: some View {
         Group {
             Section {
-                Text("Enter the 8-character code shared by another household member.")
+                Text("Enter the 8-character code shared by another household member to join their vehicle.")
                     .foregroundStyle(.secondary)
                     .font(.callout)
             }
 
-            Section("Group Code") {
+            Section("Invite Code") {
                 TextField("XXXX-XXXX", text: $joinInput)
                     .font(.system(.body, design: .monospaced))
                     .autocorrectionDisabled()
@@ -106,7 +152,13 @@ struct GroupSetupView: View {
                     VStack(spacing: 8) {
                         Label("Joined successfully!", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
-                        Text("Go back to Profile & Vehicles to adopt shared vehicles from your group.")
+                        if let vehicleName = joinedVehicleName {
+                            Text("You are now a member of \(vehicleName).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        Text("Go back to Profile & Vehicles to adopt shared vehicles.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -120,15 +172,36 @@ struct GroupSetupView: View {
                 }
             } else {
                 Section {
-                    Button("Join Group") {
-                        if GroupManager.shared.join(code: joinInput) {
-                            joinedSuccessfully = true
-                        } else {
-                            joinError = "Invalid code. Use the format XXXX-XXXX."
+                    if isJoining {
+                        HStack {
+                            ProgressView()
+                            Text("Joining…")
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 8)
                         }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    } else {
+                        Button("Join Vehicle") {
+                            Task {
+                                let clean = joinInput.replacingOccurrences(of: "-", with: "")
+                                guard clean.count == 8 else {
+                                    joinError = "Invalid code. Use the format XXXX-XXXX."
+                                    return
+                                }
+                                isJoining = true
+                                joinError = nil
+                                if let vehicleName = await GroupManager.shared.redeemInvite(code: joinInput) {
+                                    joinedVehicleName = vehicleName
+                                    joinedSuccessfully = true
+                                } else {
+                                    joinError = "Code not found, already used, or expired. Ask your household for a new one."
+                                }
+                                isJoining = false
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .disabled(joinInput.replacingOccurrences(of: "-", with: "").count < 8)
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .disabled(joinInput.replacingOccurrences(of: "-", with: "").count < 8)
                 }
             }
         }
